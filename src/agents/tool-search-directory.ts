@@ -35,6 +35,7 @@ export function applyToolSchemaDirectoryCatalog(params: {
   runId?: string;
   catalogRef?: ToolSearchCatalogRef;
   toolHookContext?: Parameters<typeof applyToolCatalogCompaction>[0]["toolHookContext"];
+  mcpDiagnostics?: Parameters<typeof applyToolCatalogCompaction>[0]["mcpDiagnostics"];
   directToolNames?: Iterable<string>;
 }) {
   const config = resolveToolSearchConfig(params.config);

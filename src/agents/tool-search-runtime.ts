@@ -1,8 +1,5 @@
 import { isRecord } from "@openclaw/normalization-core/record-coerce";
-import {
-  normalizeStringEntries,
-  uniqueStrings,
-} from "@openclaw/normalization-core/string-normalization";
+import { uniqueStrings } from "@openclaw/normalization-core/string-normalization";
 import { getPluginToolMeta } from "../plugins/tool-metadata.js";
 import { levenshteinDistance } from "../shared/levenshtein-distance.js";
 import { resolveAgentToolExecutionSchema } from "./agent-tool-availability.js";
@@ -29,6 +26,7 @@ import {
   visibleCatalogEntries,
 } from "./tool-search-catalog.js";
 import { renderToolSearchControlText } from "./tool-search-control-result.js";
+import { formatToolLookupMissError } from "./tool-search-lookup-miss.js";
 import {
   buildLexicalIndex,
   readParameterText,
@@ -78,69 +76,6 @@ function toolSearchEntryText(entry: ToolSearchCatalogEntry, parameterText?: stri
     .join(" ");
 }
 
-function tokenizeLookupValue(input: string): Set<string> {
-  return new Set(normalizeStringEntries(input.toLowerCase().split(/[^a-z0-9]+/u)));
-}
-
-function scoreUnknownToolSuggestion(needle: string, entry: ToolSearchCatalogEntry): number {
-  const normalizedNeedle = needle.toLowerCase();
-  const name = entry.name.toLowerCase();
-  const id = entry.id.toLowerCase();
-  const label = (entry.label ?? "").toLowerCase();
-  const description = entry.description.toLowerCase();
-  const needleTokens = tokenizeLookupValue(needle);
-  const entryTokens = tokenizeLookupValue(
-    `${entry.name} ${entry.id} ${entry.label ?? ""} ${entry.description}`,
-  );
-  let score = 0;
-  if ((name && normalizedNeedle.includes(name)) || id.includes(normalizedNeedle)) {
-    score += 40;
-  }
-  if (name && needleTokens.has(name)) {
-    score += 40;
-  }
-  for (const token of needleTokens) {
-    if (entryTokens.has(token)) {
-      score += 12;
-    }
-  }
-  if (label.includes(normalizedNeedle) || description.includes(normalizedNeedle)) {
-    score += 8;
-  }
-  return score;
-}
-
-function formatUnknownToolIdError(
-  needle: string,
-  entries: readonly ToolSearchCatalogEntry[],
-  options: UnknownToolErrorOptions = {},
-): string {
-  const nameCounts = new Map<string, number>();
-  for (const entry of entries) {
-    nameCounts.set(entry.name, (nameCounts.get(entry.name) ?? 0) + 1);
-  }
-  const suggestions = uniqueStrings(
-    entries
-      .map((entry) => ({
-        value: options.exactIdOnly || (nameCounts.get(entry.name) ?? 0) > 1 ? entry.id : entry.name,
-        score: scoreUnknownToolSuggestion(needle, entry),
-      }))
-      .filter((candidate) => candidate.score > 0)
-      .toSorted((a, b) => b.score - a.score || a.value.localeCompare(b.value))
-      .map((candidate) => candidate.value),
-  ).slice(0, 3);
-  const recoveryText =
-    options.recoverySurface === "code-mode"
-      ? "Use openclaw.tools.search to find a tool, openclaw.tools.describe to inspect it, then openclaw.tools.call with the exact id or name."
-      : options.recoverySurface === "catalog"
-        ? "Use catalog.search to find a callable tool handle, then call the handle or use its describe method."
-        : "Use tool_search to find a tool, tool_describe to inspect it, then tool_call with the exact id or name.";
-  if (suggestions.length === 0) {
-    return `Unknown tool id: ${needle}. ${recoveryText}`;
-  }
-  return `Unknown tool id: ${needle}. Did you mean: ${suggestions.join(", ")}? ${recoveryText}`;
-}
-
 function findEntry(
   catalog: ToolSearchCatalogSession,
   id: string,
@@ -159,7 +94,7 @@ function findEntry(
   }
   const namedEntry = namedEntries[0];
   if (!namedEntry) {
-    throw new ToolInputError(formatUnknownToolIdError(needle, entries, errorOptions));
+    throw new ToolInputError(formatToolLookupMissError(needle, catalog, entries, errorOptions));
   }
   return namedEntry;
 }
@@ -173,7 +108,10 @@ function findEntryByExactId(
   const entry = catalog.entries.find((candidate) => candidate.id === needle);
   if (!entry) {
     throw new ToolInputError(
-      formatUnknownToolIdError(needle, catalog.entries, { ...errorOptions, exactIdOnly: true }),
+      formatToolLookupMissError(needle, catalog, catalog.entries, {
+        ...errorOptions,
+        exactIdOnly: true,
+      }),
     );
   }
   return entry;
